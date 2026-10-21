@@ -1,0 +1,6 @@
+build/
+node_modules/
+*.exe
+*.obj
+*.o
+.DS_Store

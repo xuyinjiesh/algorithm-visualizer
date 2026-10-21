@@ -1,0 +1,17 @@
+{
+  "name": "structure-lab",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "C++ data structure trace visualizer",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "start": "node scripts/serve.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:cpp": "node scripts/build-examples.mjs --test",
+    "test:runner": "node --test tests/runner.integration.mjs",
+    "test:leetcode": "node --test tests/leetcode.integration.mjs",
+    "examples": "node scripts/build-examples.mjs"
+  },
+  "engines": { "node": ">=20" }
+}
