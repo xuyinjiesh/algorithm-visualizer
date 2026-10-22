@@ -1,7 +1,14 @@
 import { changedItems } from './trace.js';
+import { layoutTree, treeSide } from './tree-layout.js';
 const NS = 'http://www.w3.org/2000/svg';
 let renderSequence = 0;
-const palette = { default: { fill: '#232c39', stroke: '#57657a', text: '#bfcbdc' }, frontier: { fill: '#2c3b5e', stroke: '#8ba9fa', text: '#c2d3ff' }, active: { fill: '#bcf566', stroke: '#dbff9f', text: '#243517' }, done: { fill: '#203e33', stroke: '#579579', text: '#a3d6bd' }, visited: { fill: '#203e33', stroke: '#579579', text: '#a3d6bd' } };
+const palette = {
+  default: { fill:'var(--node-fill)', stroke:'var(--node-stroke)', text:'var(--node-text)' },
+  frontier: { fill:'var(--frontier-fill)', stroke:'var(--frontier-stroke)', text:'var(--frontier-text)' },
+  active: { fill:'var(--active-fill)', stroke:'var(--active-stroke)', text:'var(--active-text)' },
+  done: { fill:'var(--done-fill)', stroke:'var(--done-stroke)', text:'var(--done-text)' },
+  visited: { fill:'var(--done-fill)', stroke:'var(--done-stroke)', text:'var(--done-text)' },
+};
 export function element(tag, attributes = {}, content) {
   const el = document.createElement(tag);
   for (const [key, val] of Object.entries(attributes)) if (val !== undefined) el.setAttribute(key, val);
@@ -15,14 +22,13 @@ function svgEl(tag, attributes = {}, content) {
   return el;
 }
 
-// Layout once per structure/trace. Node positions are stable even when links change.
+// Graphs/lists keep stable positions across a trace; trees follow the current topology.
 export function layoutStructure(structure, frames) {
+  if (structure.kind === 'tree') return layoutTree(structure);
   const nodeMap = new Map();
-  const edgeMap = new Map();
   for (const frame of frames) {
     const s = frame.structures.find(item => item.id === structure.id && item.kind === structure.kind);
     s?.nodes?.forEach(n => nodeMap.set(n.id, n));
-    s?.edges?.forEach(e => { if (!edgeMap.has(e.id)) edgeMap.set(e.id, e); });
   }
   const nodes = [...nodeMap.values()];
   const positions = new Map();
@@ -30,22 +36,6 @@ export function layoutStructure(structure, frames) {
   let height = 360;
   if (structure.kind === 'list') {
     nodes.forEach((node, i) => positions.set(node.id, { x: 75 + i * 115, y: 175 }));
-  } else if (structure.kind === 'tree') {
-    const children = new Map(nodes.map(n => [n.id, []]));
-    const incoming = new Set();
-    for (const e of edgeMap.values()) { children.get(e.source)?.push(e.target); incoming.add(e.target); }
-    const roots = [structure.root, ...nodes.filter(n => !incoming.has(n.id)).map(n => n.id), ...nodes.map(n => n.id)].filter(id => id !== undefined);
-    const seen = new Set(), levels = [];
-    for (const root of roots) {
-      if (seen.has(root)) continue;
-      const queue = [[root, 0]]; seen.add(root);
-      for (let i = 0; i < queue.length; i++) {
-        const [id, depth] = queue[i]; (levels[depth] ??= []).push(id);
-        for (const child of children.get(id) ?? []) if (!seen.has(child)) { seen.add(child); queue.push([child, depth + 1]); }
-      }
-    }
-    height = Math.max(360, levels.length * 100 + 60);
-    levels.forEach((level, depth) => level.forEach((id, i) => positions.set(id, { x: (i + 1) * width / (level.length + 1), y: 65 + depth * 100 })));
   } else {
     // Circle layout avoids inventing algorithm-specific semantics and is deterministic.
     height = Math.max(360, Math.ceil(nodes.length / 18) * 280);
@@ -64,7 +54,7 @@ export function renderGraph(container, structure, previous, layout, zoom, select
   const svg = svgEl('svg', { class: 'graph-svg', viewBox: `0 0 ${width} ${height}`, role: 'group', 'aria-label': structure.name });
   svg.style.width = `${zoom * 100}%`; svg.style.minWidth = `${zoom * 100}%`; svg.style.height = `${zoom * 100}%`;
   const defs = svgEl('defs');
-  for (const [name, color] of Object.entries({ normal: '#596b83', active: '#bcf566', changed: '#a6be8b' })) {
+  for (const [name, color] of Object.entries({ normal:'var(--edge)', active:'var(--green)', changed:'var(--changed)' })) {
     const marker = svgEl('marker', { id: `${markerPrefix}-${name}`, markerWidth: 8, markerHeight: 8, refX: 7, refY: 4, orient: 'auto', markerUnits: 'userSpaceOnUse' });
     marker.append(svgEl('path', { d: 'M 0 1 L 7 4 L 0 7 z', fill: color })); defs.append(marker);
   }
@@ -95,12 +85,16 @@ export function renderGraph(container, structure, previous, layout, zoom, select
       lx = .25*sx+.5*cx+.25*ex; ly = .25*sy+.5*cy+.25*ey - 7;
     }
     const changed = changes.has(`edge:${e.id}`), active = e.state === 'active';
-    const color = active ? '#bcf566' : changed ? '#a6be8b' : '#46566d';
-    const g = svgEl('g', { class: 'edge', tabindex: 0, role: 'button', 'aria-label': `边 ${e.id}: ${e.source} → ${e.target}` });
+    const color = active ? 'var(--green)' : changed ? 'var(--changed)' : 'var(--edge)';
+    const side = structure.kind === 'tree' ? treeSide(e) : undefined;
+    const description = `${side === 'left' ? '左孩子' : side === 'right' ? '右孩子' : '边'} ${e.id}: ${e.source} → ${e.target}`;
+    const g = svgEl('g', { class: 'edge', tabindex: 0, role: 'button', 'aria-label': description });
+    if (side) g.append(svgEl('title', {}, description));
     g.append(svgEl('path', { class: 'edge-hit', d: path }));
     g.append(svgEl('path', { class: 'edge-line', d: path, fill: 'none', stroke: color, 'stroke-width': active ? 2.5 : 1.5, ...(structure.directed ? { 'marker-end': `url(#${markerPrefix}-${active ? 'active' : changed ? 'changed' : 'normal'})` } : {}) }));
-    if (e.weight !== undefined && e.weight !== '') {
-      g.append(svgEl('text', { x: lx, y: ly, fill: '#8b9bb1', 'font-size': 11, 'text-anchor': 'middle', 'paint-order': 'stroke', stroke: '#14171c', 'stroke-width': 5 }, String(e.weight)));
+    const sideVisibleInLayout = side && b.y > a.y && (side === 'left' ? b.x < a.x : b.x > a.x);
+    if (e.weight !== undefined && e.weight !== '' && !sideVisibleInLayout) {
+      g.append(svgEl('text', { x: lx, y: ly, fill: 'var(--muted)', 'font-size': 11, 'text-anchor': 'middle', 'paint-order': 'stroke', stroke: 'var(--bg)', 'stroke-width': 5 }, String(e.weight)));
     }
     const onSelect = () => select({ type: 'edge', id: e.id });
     g.addEventListener('click', onSelect); g.addEventListener('keydown', event => { if (event.key === 'Enter') onSelect(); });
@@ -115,13 +109,40 @@ export function renderGraph(container, structure, previous, layout, zoom, select
     g.append(list ? svgEl('rect', { class:'node-body',x:-32,y:-24,width:64,height:48,rx:8,fill:colors.fill,stroke:colors.stroke,'stroke-width':1.5 }) : svgEl('circle', { class:'node-body',r:26,fill:colors.fill,stroke:colors.stroke,'stroke-width':1.5 }));
     g.append(svgEl('text', { y:5,'text-anchor':'middle',fill:colors.text,'font-size':n.label.length>5 ? 11 : 16,'font-weight':500 }, n.label.length>16 ? n.label.slice(0,14)+'…' : n.label));
     g.append(svgEl('title', {}, `id: ${n.id}\nvalue: ${n.label}`));
-    if (n.id === structure.head || n.id === structure.root) g.append(svgEl('text', { y:-43,'text-anchor':'middle',fill:'#8eaa6d','font-size':10 }, n.id === structure.head ? 'head ↓' : 'root ↓'));
+    if (n.id === structure.head || n.id === structure.root) g.append(svgEl('text', { y:-43,'text-anchor':'middle',fill:'var(--accent-ink)','font-size':10 }, n.id === structure.head ? 'head ↓' : 'root ↓'));
     if (list && !structure.edges.some(e => e.source === n.id)) g.append(svgEl('text', { y:51,'text-anchor':'middle',class:'null-label' }, 'next = nullptr'));
     const onSelect = () => select({ type:'node', id:n.id });
     g.addEventListener('click', onSelect); g.addEventListener('keydown', event => { if (event.key === 'Enter') onSelect(); });
     svg.append(g);
   }
   container.replaceChildren(svg);
+}
+
+export function renderStack(container, structure, previous, zoom, select) {
+  if (!structure.items.length) { container.replaceChildren(element('p', { class: 'empty-state' }, '空栈 · size() = 0')); return; }
+  const wrapper = element('div', { class: 'stack-wrap', role: 'group', 'aria-label': `${structure.name}，从栈顶到栈底` });
+  wrapper.style.zoom = zoom;
+  const columns = `32px repeat(${structure.columns.length}, minmax(0, 1fr))`;
+  const header = element('div', { class: 'stack-columns' }); header.style.gridTemplateColumns = columns;
+  for (const title of ['层', ...structure.columns]) header.append(element('span', {}, title));
+  wrapper.append(element('div', { class: 'stack-top' }, '栈顶 ↓  top()'), header);
+  const changes = changedItems(structure, previous);
+  for (let i = structure.items.length - 1; i >= 0; i--) {
+    const item = structure.items[i];
+    const row = element('button', { class: `stack-row${i === structure.items.length - 1 ? ' top' : ''}`, 'aria-label': `${i === structure.items.length - 1 ? '栈顶，' : ''}第 ${i} 层，${item.map((cell, c) => `${structure.columns[c]} = ${cell.nodeId ? '节点 ' : ''}${cell.text}`).join('，')}` });
+    row.style.gridTemplateColumns = columns;
+    row.append(element('span', { class: 'stack-index' }, String(i)));
+    item.forEach((cell, c) => {
+      const content = element('span', { class: `stack-cell${changes.has(`item:${i}:${c}`) ? ' changed' : ''}`, title: cell.nodeId ? `节点 ID: ${cell.nodeId}\n值: ${cell.text}` : cell.text });
+      content.append(element('span', {}, `${cell.nodeId ? '→ ' : ''}${cell.text}`));
+      if (cell.nodeId) content.append(element('small', {}, `#${cell.nodeId}`));
+      row.append(content);
+    });
+    row.addEventListener('click', () => select({ type: 'stack-item', index: i }));
+    wrapper.append(row);
+  }
+  wrapper.append(element('div', { class: 'stack-bottom' }, '栈底 · 第 0 层'));
+  container.replaceChildren(wrapper);
 }
 
 export function renderMatrix(container, structure, previous, zoom, select) {

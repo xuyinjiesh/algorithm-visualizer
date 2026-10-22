@@ -14,7 +14,7 @@ const run = async input => {
 const named = (frame, name) => frame.structures.find(s => s.name === name);
 
 test('editor examples compile and capture simultaneous structures from actual execution', async () => {
-  const expected = { bfs: 7, dp: 30, tree: 7, list: 5, 'leetcode-array': 3, 'leetcode-list': 5 };
+  const expected = { bfs: 7, dp: 30, tree: 7, list: 5, 'leetcode-array': 3, 'leetcode-list': 5, 'leetcode-stack': 10 };
   for (const sample of EDITOR_SAMPLES.filter(s => s.watches.length)) {
     const { parsed, stdout } = await run(sample);
     assert.equal(parsed.header.source.code, sample.source);
@@ -50,7 +50,86 @@ test('editor examples compile and capture simultaneous structures from actual ex
       assert.equal(named(last, 'prev').nodes.length, 5);
       assert.match(stdout, /返回值: \[50,40,30,20,10\]/);
     }
+    if (sample.id === 'leetcode-stack') {
+      assert.deepEqual(named(last, 'stack').items, []);
+      assert.deepEqual(named(last, 'ans').values[0], ['1', '3', '2']);
+      assert.match(stdout, /返回值: \[1,3,2\]/);
+      const first = parsed.frames[0];
+      const root = named(first, 'root');
+      assert.equal(named(first, 'stack').items[1][1].nodeId, root.root);
+    }
   }
+});
+
+test('stack pair snapshots preserve boolean, nulls, duplicate-valued pointer identity and the original stack', async () => {
+  const source = `#include <stack>
+#include <cassert>
+struct Node { int val; };
+int main() {
+    Node a{7}, b{7};
+    std::stack<std::pair<bool, Node*>> stack;
+    for (int step = 0; step < 6; ++step) {
+        if (step == 0) stack.push({false, &a});
+        if (step == 1) stack.push({true, &b});
+        if (step == 2) stack.top().first = false;
+        if (step == 3) stack.push({false, nullptr});
+        if (step == 4) { stack.pop(); stack.pop(); }
+        if (step == 5) stack.pop();
+        int expected = step == 0 || step == 4 ? 1 : step == 5 ? 0 : step == 3 ? 3 : 2;
+        assert(stack.size() == expected);
+        if (step == 4) assert(stack.top().second == &a && !stack.top().first);
+    }
+}`;
+  const { parsed } = await run({ source, watches: [watch('stack', 'stack', 14)] });
+  const snapshots = parsed.frames.map(frame => named(frame, 'stack').items);
+  assert.deepEqual(snapshots.map(items => items.length), [1, 2, 2, 3, 1, 0]);
+  assert.deepEqual(snapshots[1].map(item => item.map(cell => cell.text)), [['false', '7'], ['true', '7']]);
+  assert.notEqual(snapshots[1][0][1].nodeId, snapshots[1][1][1].nodeId);
+  assert.equal(snapshots[2][1][0].text, 'false');
+  assert.deepEqual(snapshots[3][2][1], { text: 'nullptr', nodeId: null });
+  assert.deepEqual(snapshots[4][0], snapshots[0][0]);
+});
+
+test('stack adapters support scalar, pair and node elements with alternate containers and fields', async () => {
+  const source = `#include <stack>
+struct Node { int value; };
+int main() {
+    Node n{42};
+    std::stack<int, std::vector<int>> numbers;
+    std::stack<std::pair<bool, std::string>> pairs;
+    std::stack<Node*> nodes;
+    std::stack<bool, std::vector<bool>> bits;
+    numbers.push(1); numbers.push(2);
+    pairs.push({true, "hello"});
+    nodes.push(&n);
+    bits.push(true);
+    int snapshot = 0;
+}`;
+  const line = source.split('\n').findIndex(text => text.includes('int snapshot')) + 1;
+  const { parsed } = await run({ source, watches: [
+    watch('stack', 'numbers', line), watch('stack', 'pairs', line), watch('stack', 'nodes', line, { valueField: 'value' }), watch('stack', 'bits', line),
+  ] });
+  const frame = parsed.frames[0];
+  assert.deepEqual(named(frame, 'numbers').items.map(item => item[0].text), ['1', '2']);
+  assert.deepEqual(named(frame, 'pairs').items, [[{ text: 'true' }, { text: 'hello' }]]);
+  assert.equal(named(frame, 'nodes').items[0][0].text, '42');
+  assert.equal(named(frame, 'bits').items[0][0].text, 'true');
+});
+
+test('automatic stack capture includes top member writes and rejects oversized stacks clearly', async () => {
+  const source = `int main() {
+    std::stack<std::pair<bool, int>> stack;
+    stack.push({false, 1});
+    stack.top().first = true;
+    stack.pop();
+}`;
+  const { parsed } = await run({ source, watches: [watch('stack', 'stack', 3, { strategy: 'changes' })] });
+  assert.deepEqual(parsed.frames.map(f => f.source.line), [3, 4, 5]);
+  assert.equal(parsed.frames[1].structures[0].items[0][0].text, 'true');
+  assert.deepEqual(parsed.frames[2].structures[0].items, []);
+  const large = 'int main() {\nstd::stack<int> s(std::deque<int>(1001));\nint snapshot = 0;\n}';
+  await assert.rejects(runCode({ source: large, watches: [watch('stack', 's', 3)] }),
+    error => error.phase === 'run' && /Stack exceeds 1000/.test(error.diagnostics));
 });
 
 test('modified source and stdin determine the captured result', async () => {
@@ -127,6 +206,31 @@ test('compile errors, unreachable captures and invalid dimensions are reported b
     error => error.phase === 'trace' && /没有执行到采集行/.test(error.message));
   await assert.rejects(runCode({ source, watches: [watch('array', 'a', 3, { count: '2' })] }),
     error => error.phase === 'run' && /container bounds/.test(error.diagnostics));
+});
+
+test('blank dimensions infer vector and C-array sizes, including empty matrices and graphs', async () => {
+  const source = `#include <vector>
+int main() {
+    std::vector<int> values{1,2,3};
+    int fixed[2] = {4,5};
+    std::vector<std::vector<int>> empty;
+    int grid[2][3] = {{1,2,3},{4,5,6}};
+    std::vector<std::vector<int>> adj{{1},{0}};
+    int matrix[2][2] = {{0,1},{1,0}};
+    int checkpoint = 0;
+}`;
+  const { parsed } = await run({ source, watches: [
+    watch('array', 'values', 9), watch('array', 'fixed', 9),
+    watch('matrix', 'empty', 9), watch('matrix', 'grid', 9),
+    watch('adjacency', 'adj', 9), watch('graph_matrix', 'matrix', 9, { absent: '0' }),
+  ] });
+  const frame = parsed.frames[0];
+  assert.deepEqual(named(frame, 'values').values, [['1', '2', '3']]);
+  assert.deepEqual(named(frame, 'fixed').values, [['4', '5']]);
+  assert.deepEqual(named(frame, 'empty').values, []);
+  assert.deepEqual(named(frame, 'grid').values, [['1', '2', '3'], ['4', '5', '6']]);
+  assert.equal(named(frame, 'adj').nodes.length, 2);
+  assert.equal(named(frame, 'matrix').edges.length, 2);
 });
 
 test('infinite programs time out and process cancellation terminates execution', async () => {

@@ -31,7 +31,7 @@ test('watch validation rejects unusable configurations', () => {
   assert.throws(() => validateWatches([], 10), /1–12/);
   assert.throws(() => validateWatches([array(), array()], 10), /重复/);
   assert.throws(() => validateWatches([array({ line: 11 })], 10), /范围/);
-  assert.throws(() => validateWatches([array({ count: '' })], 10), /不能为空/);
+  validateWatches([array({ count: '' })], 10);
   assert.throws(() => validateWatches([array({ expression: 'a\nb' })], 10), /一行/);
   assert.throws(() => validateWatches([{ ...defaultWatch('tree'), id: 't', expression: 'root', line: 1, left: 'left()' }], 10), /成员名/);
   assert.throws(() => validateWatches([{ ...defaultWatch(), id: 'm', expression: 'dp', line: 1, activeRow: 'i' }], 10), /一起/);

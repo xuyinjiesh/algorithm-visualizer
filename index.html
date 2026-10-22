@@ -6,62 +6,80 @@
   <meta name="theme-color" content="#101216">
   <meta name="description" content="编辑 C++，添加观察变量，在同一工作区查看图、树、链表和矩阵。">
   <title>Structure Lab · C++ 可视化工作区</title>
+  <script src="/src/theme.js"></script>
   <link rel="stylesheet" href="/src/styles.css">
+  <link rel="stylesheet" href="/src/workspace.css">
+  <link rel="stylesheet" href="/src/themes.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Structure Lab 首页"><span class="brand-mark">⌘</span><span>STRUCTURE<span class="brand-light">LAB</span></span><small>WORKSPACE / 02</small></a>
+    <a class="brand" href="/" aria-label="Structure Lab 首页"><span class="brand-mark">⌘</span><span>Structure <span class="brand-light">Lab</span></span></a>
+    <label class="sample-picker">示例<select id="sample-select" aria-label="选择示例"></select></label>
     <div class="top-actions">
+      <button id="theme-toggle" class="icon-button theme-toggle" aria-label="切换到浅色主题" title="切换到浅色主题"><svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15A8.5 8.5 0 0 1 9 4a8.5 8.5 0 1 0 11 11Z"/></svg></button>
+      <button id="more-actions" class="icon-button" aria-label="更多工作区操作" aria-expanded="false" aria-controls="file-actions">⋯</button>
+      <div id="file-actions" class="file-actions">
       <button id="guide-button" class="quiet-button">使用说明 ↗</button>
       <button id="import-button" class="quiet-button">导入轨迹</button>
       <button id="export-button" class="quiet-button" disabled>导出轨迹 ↓</button>
+      <button id="reset-layout" class="quiet-button" title="恢复默认比例、展开状态与双栏布局">↺ 重置布局</button>
+      </div>
       <span class="local-badge"><i></i>本机 C++17</span>
     </div>
     <input id="file-input" type="file" accept=".jsonl,.ndjson,.json" hidden>
     <input id="source-input" type="file" accept=".cpp,.cc,.cxx,.txt" hidden>
   </header>
   <main class="studio">
-    <section class="studio-heading">
-      <div><div class="eyebrow">CODE → OBSERVE → UNDERSTAND</div><h1>代码与结构，在一起<span>。</span></h1></div>
-      <label class="sample-picker">打开实验<select id="sample-select" aria-label="选择示例"></select></label>
-    </section>
-    <div class="studio-columns">
+    <nav class="mobile-switch" aria-label="工作区切换"><button data-mobile="code" aria-pressed="true">代码与配置</button><button data-mobile="structures" aria-pressed="false">结构与回放</button></nav>
+    <div class="studio-columns" id="workspace" data-mobile="code">
       <section class="editor-panel" aria-label="C++ 编辑工作区">
-        <div class="panel-heading"><div class="file-tab"><i></i>main.cpp <span id="draft-badge">已保存</span></div><div class="panel-actions"><button id="load-source" class="quiet-button">打开 .cpp</button><button id="save-source" class="quiet-button">下载源码 ↓</button></div></div>
+        <div class="panel-heading"><div class="file-tab"><i></i>main.cpp <span id="draft-badge">已保存</span></div><div class="panel-actions"><button id="load-source" class="quiet-button">打开 .cpp</button><button id="save-source" class="quiet-button">下载源码 ↓</button><button data-focus="code" class="icon-button" aria-label="专注代码面板" aria-pressed="false" title="专注代码面板">⛶</button></div></div>
         <div class="execution-toolbar"><label>运行模式<select id="execution-mode"><option value="program">完整程序 · main()</option><option value="leetcode">LeetCode · class Solution</option></select></label><span id="execution-summary">使用源码中的 main()</span></div>
         <div class="editor-toolbar"><span>C++17</span><span id="cursor-position">Ln 1, Col 1</span><span id="execution-line"></span></div>
         <div class="code-editor">
           <div id="line-gutter" class="line-gutter" aria-label="点击行号选择采集行"></div>
           <textarea id="source-editor" aria-label="C++ 源代码" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
         </div>
+        <div id="dock-resizer" class="dock-resizer" role="separator" tabindex="0" aria-label="调整配置区高度" aria-orientation="horizontal" aria-valuemin="100" aria-valuemax="340" aria-valuenow="180" title="上下拖动调整配置区高度；方向键调整；双击重置"></div>
+        <section class="config-dock" id="config-dock" aria-label="运行配置">
+          <div class="dock-tabs" role="tablist" aria-label="配置分类"><button id="tab-watch" role="tab" data-dock="watch" aria-selected="true" aria-controls="dock-watch">观察变量 <span id="watch-count">0 个变量</span></button><button id="tab-input" role="tab" data-dock="input" aria-selected="false" aria-controls="dock-input" tabindex="-1"><span id="input-tab-label">标准输入</span></button><button id="tab-output" role="tab" data-dock="output" aria-selected="false" aria-controls="dock-output" tabindex="-1">运行输出 <span id="console-badge"></span></button><button id="toggle-dock" class="icon-button" aria-label="折叠配置区" aria-expanded="true" aria-controls="dock-body" title="折叠配置区">⌄</button></div>
+          <div class="dock-body" id="dock-body">
+          <div id="dock-input" role="tabpanel" aria-labelledby="tab-input" tabindex="0" hidden>
         <section id="leetcode-config" class="leetcode-config" aria-label="LeetCode 调用配置" hidden>
-          <div class="leetcode-fields"><label>调用方法<input id="leetcode-method" placeholder="例如 runningSum" maxlength="100" spellcheck="false"></label><label>补全节点定义<select id="leetcode-nodes"><option value="none">不补全</option><option value="list">ListNode · val / next</option><option value="tree">TreeNode · val / left / right</option><option value="both">ListNode 和 TreeNode</option></select></label></div>
+          <div class="leetcode-fields"><label>调用方法 · 留空自动识别<input id="leetcode-method" list="leetcode-methods" aria-describedby="leetcode-detection" placeholder="填写 public 方法名" maxlength="100" spellcheck="false"><datalist id="leetcode-methods"></datalist></label><label>补全节点定义<select id="leetcode-nodes"><option value="auto">自动识别缺失定义</option><option value="none">不补全</option><option value="list">ListNode · val / next</option><option value="tree">TreeNode · val / left / right</option><option value="both">ListNode 和 TreeNode</option></select></label></div>
+          <p id="leetcode-detection" role="status" aria-live="polite"></p>
           <label class="argument-label">测试参数 · JSON 数组<textarea id="leetcode-arguments" spellcheck="false" maxlength="65536" placeholder="[[1,2,3,4]]">[]</textarea></label>
-          <p>按方法参数顺序填写：一个数组用 <code>[[1,2,3]]</code>，数组和数字用 <code>[[2,7,11,15],9]</code>，无参用 <code>[]</code>。节点参数用数组，树按层序并用 <code>null</code> 占位。源码已有节点定义时选择“不补全”。</p>
+          <p>按方法参数顺序填写：一个数组用 <code>[[1,2,3]]</code>，数组和数字用 <code>[[2,7,11,15],9]</code>，无参用 <code>[]</code>。节点参数用数组，树按层序并用 <code>null</code> 占位。自动补全缺失的 <code>ListNode</code> / <code>TreeNode</code>，保留源码已有定义。</p>
         </section>
-        <div class="watch-panel">
-          <div class="watch-heading"><div><strong>观察变量</strong><span id="watch-count">0 个变量</span></div><button id="add-watch" class="add-button">＋ 添加变量</button></div>
+        <details id="stdin-panel" class="input-panel" open><summary>标准输入 <span>stdin</span></summary><textarea id="stdin" aria-label="程序标准输入" placeholder="需要 cin / scanf 时，在这里输入数据" spellcheck="false"></textarea></details>
+          </div>
+        <div class="watch-panel" id="dock-watch" role="tabpanel" aria-labelledby="tab-watch" tabindex="0">
+          <div class="watch-heading"><div><strong>采集与观察</strong></div><button id="add-watch" class="add-button">＋ 添加变量</button></div>
           <div id="watch-list" class="watch-list"></div>
           <p class="watch-help">选中变量名后添加观察，或点击行号指定采集位置。</p>
         </div>
-        <details id="stdin-panel" class="input-panel"><summary>标准输入 <span>stdin</span></summary><textarea id="stdin" aria-label="程序标准输入" placeholder="需要 cin / scanf 时，在这里输入数据" spellcheck="false"></textarea></details>
+          <div id="dock-output" role="tabpanel" aria-labelledby="tab-output" tabindex="0" hidden><details id="console-panel" class="console-panel"><summary>运行输出</summary><pre id="console-output">运行后在这里查看标准输出和编译信息。</pre></details></div>
+          </div>
+        </section>
         <div class="run-toolbar"><span id="run-status" role="status">准备就绪</span><button id="stop-run" class="quiet-button" hidden>停止运行</button><button id="run-button" class="primary-button">▶ 编译并运行 <kbd>Ctrl ↵</kbd></button></div>
-        <details id="console-panel" class="console-panel"><summary>运行输出 <span id="console-badge"></span></summary><pre id="console-output">运行后在这里查看标准输出和编译信息。</pre></details>
       </section>
+      <div id="workspace-splitter" class="workspace-splitter" role="separator" tabindex="0" aria-label="调整代码与结构面板宽度" aria-orientation="vertical" aria-valuemin="28" aria-valuemax="72" aria-valuenow="44" title="拖动调整比例；方向键调整；双击重置"></div>
       <section class="results-panel" aria-label="结构视图">
-        <div class="results-heading"><div><span class="eyebrow">LIVE STRUCTURES</span><h2>结构视图 <span id="structure-count">0</span></h2></div><span id="frame-count" class="mono">等待运行</span></div>
+        <div class="results-heading"><h2>结构视图 <span id="structure-count">0</span></h2><span id="frame-count" class="mono">等待运行</span><div class="panel-actions"><button id="toggle-all-cards" class="quiet-button">全部折叠</button><button data-focus="structures" class="icon-button" aria-label="专注结构面板" aria-pressed="false" title="专注结构面板">⛶</button></div></div>
+        <div class="structure-scroll">
         <div id="result-status" class="result-status">添加变量并运行代码，所有结构将在这里同时显示。</div>
         <div id="structure-grid" class="structure-grid"></div>
+        <div class="legend"><span><i class="dot default"></i>普通</span><span><i class="dot active"></i>当前</span><span><i class="dot frontier"></i>待处理</span><span><i class="dot done"></i>完成</span><span>虚线外框 · 本步变化</span></div>
+        <details class="inspector-strip" id="inspector-panel"><summary>元素详情 <span>点击节点、边或单元格查看</span></summary><div id="selection">点击任意结构中的节点、边或单元格查看详情。</div><div id="variables"></div></details>
+        </div>
         <div class="playback">
           <div class="step-caption"><span id="step-number" class="step-pill">STEP —</span><strong id="step-label">等待第一份快照</strong></div>
           <div class="timeline-row"><button id="restart" class="transport" aria-label="回到第一步" disabled>↺</button><button id="previous" class="transport" aria-label="上一步" aria-keyshortcuts="Shift+F5" title="上一步（Shift+F5）" disabled>‹</button><button id="play" class="play-button" aria-label="播放" disabled>▶</button><button id="next" class="transport" aria-label="下一步" aria-keyshortcuts="F5" title="下一步（F5）" disabled>›</button><input id="timeline" type="range" min="0" max="0" value="0" aria-label="回放进度" disabled><select id="speed" aria-label="播放速度"><option value="1600">0.5×</option><option value="800" selected>1×</option><option value="400">2×</option><option value="200">4×</option></select></div>
           <div class="playback-hint"><span><kbd>Shift + F5</kbd> 上一步</span><span><kbd>F5</kbd> 下一步</span><span>编辑器内也可使用</span></div>
         </div>
-        <div class="legend"><span><i class="dot default"></i>普通</span><span><i class="dot active"></i>当前</span><span><i class="dot frontier"></i>待处理</span><span><i class="dot done"></i>完成</span><span>虚线外框 · 本步变化</span></div>
-        <div class="inspector-strip"><span class="section-label">元素详情</span><div id="selection">点击任意结构中的节点、边或单元格查看详情。</div><div id="variables"></div></div>
       </section>
     </div>
-    <footer>手动选择变量与采集行 · 原始源码保持可编辑 · 所有结构共享一条时间轴<span>编辑器草稿保存在当前浏览器</span></footer>
+    <footer><span>● 本机 C++17 · 草稿自动保存</span><span>拖动中线调整布局 · Ctrl + Enter 运行 · F5 单步</span></footer>
   </main>
   <dialog id="watch-dialog">
     <form id="watch-form">
@@ -70,11 +88,12 @@
       <div class="form-grid">
         <label class="wide">变量 / 表达式<input id="watch-expression" required maxlength="200" placeholder="例如 adj、root、head、dp"></label>
         <label>可视化类型<select id="watch-kind"></select></label>
+        <label>采集策略<select id="watch-strategy"><option value="changes">所有修改位置（自动识别）</option><option value="line">指定行</option></select></label>
         <label>在哪一行执行后采集<input id="watch-line" required type="number" min="1"></label>
       </div>
       <div id="watch-fields" class="form-grid extra-fields"></div>
       <div class="capture-preview"><span>采集行预览</span><code id="capture-line-preview"></code></div>
-      <p class="dialog-note">选择变量已定义且仍在作用域内的完整语句行。循环中的该行每执行一次，就记录一帧；单行 for / if 请先补上大括号。</p>
+      <p class="dialog-note">右键点击源码变量即可添加观察，默认在自动识别的所有修改位置采集；变量名、采集行及观察列表使用相同颜色。自动识别支持赋值、自增及常见容器修改；通过别名或自定义函数修改、跨行语句请使用指定行。数组 / 矩阵的尺寸留空时自动读取大小。手动填写的尺寸及字段表达式必须在所有采集位置有效。单行 for / if 请先补上大括号并拆行。</p>
       <p id="watch-error" class="form-error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="cancel-watch" type="button" class="quiet-button">取消</button><button type="submit" class="primary-button">保存观察变量</button></div>
     </form>
@@ -84,7 +103,8 @@
     <ol><li>在左侧编辑 C++，也可以打开本地 .cpp 文件。</li><li>点击“添加变量”，填写变量名、结构类型、尺寸或字段，以及采集行。</li><li>点击“编译并运行”，在右侧同时观察全部结构，用时间轴回放。</li></ol>
     <p>无需手写 viz::watch 或 VIZ_STEP。工具只在编译副本中插入采集代码，下载的源码保留原样。采集行必须位于变量有效的作用域中；未执行到该行的变量会显示“尚未采集”。</p>
     <p>不同采集行的变量保留最近一次采集结果，并标明采集步骤。修改代码或观察配置后，重新运行即可更新视图。</p>
-    <p>LeetCode 代码可选择“LeetCode · class Solution”模式，填写 public 方法名和 JSON 参数。工具补全常用标准库、std 命名空间和 main()，按方法签名转换参数并输出返回值；void 方法会输出调用后的参数。需要 ListNode / TreeNode 时可选择补全节点定义。观察变量和行号仍以左侧原始代码为准。</p>
+    <p>std::stack 选择“栈”类型，可以观察 stack&lt;pair&lt;bool, TreeNode*&gt;&gt;。栈顶在上，pair 成员分列显示，节点指针显示值和 ID，空指针显示 nullptr。采集读取栈副本，原栈保持不变。</p>
+    <p>LeetCode 代码可选择“LeetCode · class Solution”模式，只有一个 public 方法时自动采用，方法名留空即可；多个方法时手动指定。填写 JSON 参数后，工具补全常用标准库、std 命名空间、main() 和缺失的 ListNode / TreeNode，保留已有节点定义。按方法签名转换参数并输出返回值；void 方法会输出调用后的参数。观察变量和行号仍以左侧原始代码为准。</p>
     <p>快捷键：Ctrl + Enter 编译并运行；F5 下一步，Shift + F5 上一步，在源码编辑器内也有效，并会暂停自动播放。回退直接恢复上一帧采集的数据，无需重新编译。没有轨迹时会提示先运行，第一步和最后一步不会越界。Ctrl + F5 保留浏览器刷新功能。</p>
     <p class="dialog-note">程序在本机以当前用户权限执行，使用已安装的 C++17 编译器。单次运行时限 5 秒；本地服务不是面向不可信代码的沙箱。</p>
   </dialog>

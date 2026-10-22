@@ -46,6 +46,18 @@ export function validateTrace(records) {
           edgeIds.add(e.id);
         });
         for (const key of ['root', 'head']) if (s[key] !== undefined && s[key] !== null && !ids.has(s[key])) fail(`${key} 指向不存在的节点`);
+      } else if (s.kind === 'stack') {
+        if (!Array.isArray(s.columns) || s.columns.length < 1 || s.columns.length > 2) fail('栈需要 1–2 个成员列');
+        s.columns.forEach(column => text(column, '栈成员名称', 100));
+        if (!Array.isArray(s.items) || s.items.length > LIMITS.nodes) fail('栈最多包含 1000 个元素');
+        for (const item of s.items) {
+          if (!Array.isArray(item) || item.length !== s.columns.length) fail('栈元素的成员数量不一致');
+          for (const cell of item) {
+            if (!plain(cell)) fail('栈成员格式错误');
+            text(cell.text, '栈成员值', 1000);
+            if (cell.nodeId !== undefined && cell.nodeId !== null) text(cell.nodeId, '栈节点 ID', 200);
+          }
+        }
       } else if (s.kind === 'matrix' || s.kind === 'array') {
         if (!Array.isArray(s.values)) fail('矩阵 values 必须是二维数组');
         const columns = s.values[0]?.length ?? 0;
@@ -75,7 +87,11 @@ export function serializeTrace(trace) {
 export function changedItems(current, previous) {
   const changed = new Set();
   if (!previous || previous.kind !== current.kind) return changed;
-  if (current.values) {
+  if (current.kind === 'stack') {
+    current.items.forEach((item, i) => item.forEach((cell, col) => {
+      if (JSON.stringify(cell) !== JSON.stringify(previous.items[i]?.[col])) changed.add(`item:${i}:${col}`);
+    }));
+  } else if (current.values) {
     current.values.forEach((row, r) => row.forEach((v, c) => { if (v !== previous.values?.[r]?.[c]) changed.add(`${r}:${c}`); }));
   } else {
     const nodes = new Map(previous.nodes.map(n => [n.id, n]));

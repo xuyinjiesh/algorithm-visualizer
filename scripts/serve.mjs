@@ -34,7 +34,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
     if (!trustedRequest(req)) { json(res, 403, { error: '仅允许本机同源请求' }); return; }
-    if (pathname === '/api/session' && req.method === 'GET') { json(res, 200, { token, capabilities: { leetcode: true } }); return; }
+    if (pathname === '/api/session' && req.method === 'GET') { json(res, 200, { token, capabilities: { leetcode: true, leetcodeAuto: true, stack: true } }); return; }
     if (pathname === '/api/run' && req.method === 'POST') {
       if (req.headers['x-structure-token'] !== token || !req.headers['content-type']?.startsWith('application/json')) {
         json(res, 403, { error: '请刷新页面后再运行' }); return;

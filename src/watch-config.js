@@ -1,4 +1,5 @@
 export const WATCH_TYPES = {
+  scalar: '普通变量',
   adjacency: '图 · 邻接表',
   graph_matrix: '图 · 邻接矩阵',
   forward_star: '图 · 链式前向星',
@@ -6,12 +7,15 @@ export const WATCH_TYPES = {
   list: '链表 · 指针',
   matrix: '二维矩阵',
   array: '一维数组',
+  stack: '栈 · std::stack',
 };
 
 export const WATCH_FIELDS = {
+  scalar: [],
+  stack: [['valueField', '指向节点的值字段（元素含节点指针时使用）', 'val']],
   adjacency: [
     ['first', '起始下标', '0'],
-    ['count', '节点数量', 'adj.size()'],
+    ['count', '节点数量（留空自动）', ''],
     ['entry', '邻接条目', 'scalar', ['scalar:节点编号', 'pair:pair<终点, 权重>', 'fields:结构体字段']],
     ['toField', '终点字段', 'to'],
     ['weightField', '权重字段（可空）', 'weight'],
@@ -19,7 +23,7 @@ export const WATCH_FIELDS = {
     ['active', '当前节点表达式（可空）', ''],
   ],
   graph_matrix: [
-    ['first', '起始下标', '0'], ['count', '节点数量', 'n'],
+    ['first', '起始下标', '0'], ['count', '节点数量（留空自动）', ''],
     ['absent', '无边标记', '-1'],
     ['directed', '边的方向', 'true', ['true:有向图', 'false:无向图（对称矩阵）']],
     ['active', '当前节点表达式（可空）', ''],
@@ -34,10 +38,10 @@ export const WATCH_FIELDS = {
   tree: [['valueField', '节点值字段', 'value'], ['left', '左孩子字段', 'left'], ['right', '右孩子字段', 'right']],
   list: [['valueField', '节点值字段', 'value'], ['nextField', 'next 字段', 'next']],
   matrix: [
-    ['rows', '行数', 'rows'], ['cols', '列数', 'cols'],
+    ['rows', '行数（留空自动）', ''], ['cols', '列数（留空自动）', ''],
     ['activeRow', '当前行表达式（可空）', ''], ['activeCol', '当前列表达式（可空）', ''],
   ],
-  array: [['count', '元素数量', 'n'], ['active', '当前下标表达式（可空）', '']],
+  array: [['count', '元素数量（留空自动）', ''], ['active', '当前下标表达式（可空）', '']],
 };
 
 export function defaultWatch(kind = 'matrix') {
@@ -52,12 +56,13 @@ export function validateWatches(watches, lineCount) {
     if (typeof watch.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(watch.id) || ids.has(watch.id)) throw new Error('观察变量 ID 无效或重复');
     ids.add(watch.id);
     if (!Number.isInteger(watch.line) || watch.line < 1 || watch.line > lineCount) throw new Error(`${watch.expression || '变量'} 的采集行超出源码范围`);
+    if (watch.strategy !== undefined && !['changes', 'line'].includes(watch.strategy)) throw new Error('观察策略无效');
     if (typeof watch.expression !== 'string' || !watch.expression.trim() || watch.expression.length > 200 || /[\r\n#]/.test(watch.expression)) throw new Error('变量表达式不能为空，且必须在一行内');
     for (const [key] of WATCH_FIELDS[watch.kind]) {
       if (typeof watch[key] !== 'string' || watch[key].length > 200 || /[\r\n#]/.test(watch[key])) throw new Error(`${key} 配置无效`);
     }
-    if (['tree', 'list'].includes(watch.kind)) {
-      for (const key of watch.kind === 'tree' ? ['valueField', 'left', 'right'] : ['valueField', 'nextField'])
+    if (['tree', 'list', 'stack'].includes(watch.kind)) {
+      for (const key of watch.kind === 'tree' ? ['valueField', 'left', 'right'] : watch.kind === 'list' ? ['valueField', 'nextField'] : ['valueField'])
         if (!/^[a-zA-Z_]\w*$/.test(watch[key])) throw new Error('节点字段必须是简单的 C++ 成员名');
     }
     if (watch.kind === 'adjacency') {
@@ -66,9 +71,9 @@ export function validateWatches(watches, lineCount) {
     }
     if ('directed' in watch && !['true', 'false'].includes(watch.directed)) throw new Error('图的方向配置无效');
     const required = {
-      adjacency: ['first', 'count'], graph_matrix: ['first', 'count', 'absent'],
+      adjacency: ['first'], graph_matrix: ['first', 'absent'],
       forward_star: ['to', 'next', 'first', 'count', 'end', 'edgeCount'],
-      matrix: ['rows', 'cols'], array: ['count'], tree: [], list: [],
+      matrix: [], array: [], scalar: [], tree: [], list: [], stack: [],
     }[watch.kind];
     for (const key of required) if (!watch[key].trim()) throw new Error(`${key} 不能为空`);
     if (watch.kind === 'matrix' && Boolean(watch.activeRow.trim()) !== Boolean(watch.activeCol.trim())) throw new Error('当前行和当前列需要一起填写');

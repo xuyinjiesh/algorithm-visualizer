@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { instrument } from './instrument.mjs';
 import { wrapLeetCode } from './leetcode.mjs';
+import { explainWatchErrors } from './watch-diagnostics.mjs';
 import { parseTrace, LIMITS } from '../src/trace.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -109,7 +110,7 @@ function getCompiler() {
 export async function runCode({ source, watches, stdin = '', execution, timeoutMs = 5000 }, signal) {
   let generated;
   try {
-    generated = wrapLeetCode(instrument(source, watches), execution);
+    generated = wrapLeetCode(instrument(source, watches), execution, source);
     if (typeof stdin !== 'string' || Buffer.byteLength(stdin) > 65536) throw new Error('标准输入不能超过 64 KB');
     if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 10000) throw new Error('运行时限需在 100–10000 ms 之间');
   } catch (error) { throw new RunError(error.message, 'validation'); }
@@ -127,7 +128,11 @@ export async function runCode({ source, watches, stdin = '', execution, timeoutM
       ? ['/nologo', '/std:c++17', '/EHsc', '/utf-8', '/W3', `/I${path.join(root, 'include')}`, 'program.cpp', `/Fe:${executable}`, '/Fo:program.obj']
       : ['-std=c++17', '-O0', '-g', '-I', path.join(root, 'include'), 'program.cpp', '-o', executable];
     const compiled = await execute(compiler.command, args, { cwd: job, env: compiler.env, timeout: 30000, signal, fallbackEncoding: compiler.encoding });
-    if (compiled.code !== 0) throw new RunError('编译失败，请检查源码及观察变量配置', 'compile', { diagnostics: compiled.stdout + compiled.stderr });
+    if (compiled.code !== 0) {
+      const diagnostics = compiled.stdout + compiled.stderr;
+      const explanations = explainWatchErrors(diagnostics, watches);
+      throw new RunError(explanations.length ? `观察配置编译失败。${explanations.join('\n')} 请点击对应变量的“编辑”修正配置。` : '编译失败，请检查源码及观察变量配置', 'compile', { diagnostics });
+    }
     phase = 'run';
     const result = await execute(path.join(job, executable), [], { cwd: job, stdin, timeout: timeoutMs, signal });
     if (result.code !== 0) throw new RunError(`程序退出，返回码 ${result.code}`, 'run', { stdout: result.stdout, diagnostics: result.stderr });

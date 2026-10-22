@@ -15,8 +15,8 @@ function cppValue(value) {
   return `${type}::string(${cppString(value)})`;
 }
 
-export function wrapLeetCode(instrumentedSource, execution) {
-  const config = validateExecution(execution);
+export function wrapLeetCode(instrumentedSource, execution, source = instrumentedSource) {
+  const config = validateExecution(execution, source);
   if (config.mode === 'program') return instrumentedSource;
   const prefix = ['#line 1 "leetcode-support.cpp"'];
   if (['list', 'both'].includes(config.nodes)) prefix.push('#define STRUCTURE_LAB_DEFINE_LIST_NODE');

@@ -1,12 +1,48 @@
 import { parseTrace, serializeTrace, LIMITS } from './trace.js';
-import { element, layoutStructure, renderGraph, renderMatrix } from './render.js';
+import { element, layoutStructure, renderGraph, renderMatrix, renderStack } from './render.js';
 import { WATCH_TYPES, WATCH_FIELDS, defaultWatch, validateWatches } from './watch-config.js';
 import { EDITOR_SAMPLES, rebaseWatches } from './editor-samples.js';
 import { normalizeExecution, validateExecution } from './execution-config.js';
+import { analyzeLeetCode, nodeDefinitionsFor } from './leetcode-analysis.js';
+import { captureLines, identifierAt, codeOnly, watchColor, WATCH_COLORS } from './watch-strategy.js';
+import { initWorkspace, openWorkspaceDock, syncWorkspaceCards, revealInspector } from './workspace.js';
 
 const $ = id => document.getElementById(id);
+const lightWatchColors = ['#46751b', '#0872a1', '#a65113', '#7952ba', '#b83b72', '#087c69', '#886300', '#4b60b8', '#9a42a8', '#367b3d', '#b34236', '#087780'];
+function uiWatchColor(watch, watches) {
+  const color = watchColor(watch, watches);
+  return document.documentElement.dataset.theme === 'light' ? lightWatchColors[WATCH_COLORS.indexOf(color)] ?? color : color;
+}
 const editor = $('source-editor');
-const kinds = { graph: 'GRAPH', tree: 'TREE', list: 'LINKED LIST', matrix: 'MATRIX', array: 'ARRAY' };
+const highlights = element('pre', { class: 'source-highlights', 'aria-hidden': 'true' });
+editor.before(highlights);
+function syncHighlights() {
+  highlights.scrollTop = editor.scrollTop;
+  highlights.scrollLeft = editor.scrollLeft;
+}
+function renderHighlights() {
+  const code = codeOnly(editor.value).split('\n'), fragment = document.createDocumentFragment();
+  const locations = watches.map(watch => ({ watch, lines: captureLines(editor.value, watch) }));
+  editor.value.split('\n').forEach((text, index) => {
+    const row = element('span', { class: 'source-highlight-line' });
+    const colors = locations.filter(item => item.lines.includes(index + 1)).map(item => uiWatchColor(item.watch, watches));
+    if (colors.length) row.style.background = `linear-gradient(90deg, ${colors.flatMap((color, i) => [`${color}16 ${i / colors.length * 100}%`, `${color}16 ${(i + 1) / colors.length * 100}%`]).join(', ')})`;
+    let offset = 0;
+    for (const match of code[index].matchAll(/\b[a-zA-Z_]\w*\b/g)) {
+      const watch = watches.find(w => w.expression === match[0]);
+      if (!watch) continue;
+      row.append(document.createTextNode(text.slice(offset, match.index)));
+      const mark = element('span', {}, match[0]);
+      mark.style.color = uiWatchColor(watch, watches);
+      mark.style.background = `${uiWatchColor(watch, watches)}18`;
+      row.append(mark); offset = match.index + match[0].length;
+    }
+    row.append(document.createTextNode(text.slice(offset) || (text ? '' : ' ')));
+    fragment.append(row);
+  });
+  highlights.replaceChildren(fragment); syncHighlights();
+}
+const kinds = { graph: 'GRAPH', tree: 'TREE', list: 'LINKED LIST', matrix: 'MATRIX', array: 'ARRAY', stack: 'STACK' };
 const storageKey = 'structure-lab-editor-v2';
 let activeSample = 'bfs', drafts = {}, watches = [], previousSource = '';
 let trace, frameIndex = 0, resultSignature, resultOrigin, selection, selectedLine = 1, lastRunFailed = false;
@@ -23,6 +59,15 @@ function renderExecutionMode() {
   $('leetcode-config').hidden = !leetcode;
   $('stdin-panel').hidden = leetcode;
   $('execution-summary').textContent = leetcode ? '自动补全运行入口' : '使用源码中的 main()';
+  if (!leetcode) return;
+  const analysis = analyzeLeetCode(editor.value), config = executionConfig();
+  const automatic = analysis.methods.length === 1 ? analysis.methods[0] : '';
+  $('leetcode-method').placeholder = automatic ? `自动：${automatic}（留空即可）` : '填写 public 方法名';
+  $('leetcode-methods').replaceChildren(...[...new Set(analysis.methods)].map(name => element('option', { value: name })));
+  const methodHint = config.method.trim() ? `手动调用：${config.method.trim()}()` : automatic ? `自动调用：${automatic}()`
+    : analysis.methods.length ? `检测到多个 public 方法：${analysis.methods.join('、')}，请指定调用方法。` : '未识别到 public 方法，可手动填写方法名。';
+  const definitions = nodeDefinitionsFor(config.nodes, analysis);
+  $('leetcode-detection').textContent = `${methodHint} · ${definitions.length ? `运行时补全：${definitions.join('、')}` : analysis.definedNodes.length ? `使用源码中的定义：${analysis.definedNodes.join('、')}` : config.nodes === 'none' ? '已关闭节点补全' : '无需补全节点定义'}`;
 }
 function setExecution(value) {
   const config = normalizeExecution(value);
@@ -90,7 +135,7 @@ function switchSample(id, initial = false) {
     if (draft.watches.length) validateWatches(draft.watches, draft.source.split('\n').length);
     normalizeExecution(draft.execution);
   } catch { draft = sample; }
-  watches = structuredClone(draft.watches);
+  watches = structuredClone(draft.watches).map((w, index) => ({ ...w, color: w.color || WATCH_COLORS[index % WATCH_COLORS.length] }));
   editor.value = draft.source; previousSource = draft.source; editor.scrollTop = 0;
   $('stdin').value = draft.stdin;
   setExecution(draft.execution);
@@ -106,7 +151,11 @@ function currentExecutionLine() {
 }
 function renderGutter() {
   const execution = currentExecutionLine();
-  const watched = new Set(watches.map(w => w.line));
+  const watched = new Map();
+  for (const watch of watches) for (const line of captureLines(editor.value, watch)) {
+    if (!watched.has(line)) watched.set(line, []);
+    watched.get(line).push(watch);
+  }
   const lines = editor.value.split('\n');
   $('line-gutter').replaceChildren(...lines.map((_, i) => {
     const line = i + 1;
@@ -114,13 +163,19 @@ function renderGutter() {
       class: `gutter-line ${watched.has(line) ? 'watched' : ''} ${execution === line ? 'current' : ''} ${selectedLine === line && execution !== line ? 'selected' : ''}`,
       'aria-label': `选择第 ${line} 行`, title: `第 ${line} 行${watched.has(line) ? ' · 已添加观察' : ''}`,
     }, String(line));
+    for (const [index, watch] of (watched.get(line) || []).entries()) {
+      const dot = element('i', { class: 'gutter-watch', title: watch.expression });
+      dot.style.background = uiWatchColor(watch, watches);
+      dot.style.left = `${3 + index * 5}px`;
+      button.append(dot);
+    }
     button.addEventListener('click', () => goToLine(line));
     return button;
   }));
   $('line-gutter').scrollTop = editor.scrollTop;
   $('execution-line').textContent = execution ? `回放 · 第 ${execution} 行` : trace ? '源码已变化，重新运行后定位' : '';
   editor.style.backgroundImage = execution
-    ? `linear-gradient(transparent ${14 + (execution - 1) * 22}px, #26351c99 ${14 + (execution - 1) * 22}px, #26351c99 ${14 + execution * 22}px, transparent ${14 + execution * 22}px)`
+    ? `linear-gradient(transparent ${14 + (execution - 1) * 22}px, var(--execution-highlight) ${14 + (execution - 1) * 22}px, var(--execution-highlight) ${14 + execution * 22}px, transparent ${14 + execution * 22}px)`
     : 'none';
   editor.style.backgroundAttachment = 'local';
 }
@@ -149,16 +204,18 @@ function sourceChanged() {
   stopPlayback();
   watches = rebaseWatches(watches, previousSource, editor.value);
   previousSource = editor.value;
-  saveDraft(); renderWatches(); updateCursor(); renderResults();
+  renderExecutionMode(); saveDraft(); renderWatches(); updateCursor(); renderResults();
 }
 function renderWatches() {
   $('watch-count').textContent = `${watches.length} 个变量`;
   $('watch-list').replaceChildren(...watches.map(watch => {
     const row = element('div', { class: 'watch-row' });
+    row.style.setProperty('--watch-color', uiWatchColor(watch, watches));
     const main = element('div', { class: 'watch-main' });
     main.append(element('strong', {}, watch.expression), element('small', { class: watch.needsReview ? 'needs-review' : '' }, watch.needsReview ? '源码行已删除或替换，请确认采集位置' : WATCH_TYPES[watch.kind]));
-    const location = element('button', { class: 'watch-location', title: '跳转到采集行', 'aria-label': `${watch.expression} 跳转第 ${watch.line} 行` }, `L${watch.line}`);
-    location.addEventListener('click', () => goToLine(watch.line));
+    const locations = captureLines(editor.value, watch);
+    const location = element('button', { class: 'watch-location', title: `采集行：${locations.join('、') || '未识别到修改位置'}`, 'aria-label': `${watch.expression} 跳转采集行` }, watch.strategy === 'changes' ? `修改处 · ${locations.length} 行` : `L${watch.line}`);
+    location.addEventListener('click', () => goToLine(locations[0] || watch.line));
     const edit = element('button', { class: 'quiet-button', 'aria-label': `编辑观察 ${watch.expression}` }, '编辑');
     edit.addEventListener('click', () => openWatch(watch));
     const remove = element('button', { class: 'quiet-button', 'aria-label': `移除观察 ${watch.expression}` }, '✕');
@@ -170,7 +227,7 @@ function renderWatches() {
     return row;
   }));
   if (!watches.length) $('watch-list').append(element('div', { class: 'watch-help' }, '还没有观察变量。试着添加数组、dp 表或图。'));
-  renderGutter();
+  renderGutter(); renderHighlights();
 }
 function watchFields(config) {
   $('watch-fields').replaceChildren(...WATCH_FIELDS[config.kind].map(([key, title, fallback, choices]) => {
@@ -190,17 +247,21 @@ function watchFields(config) {
 }
 function updateCapturePreview() {
   const line = Number($('watch-line').value);
-  $('capture-line-preview').textContent = editor.value.split('\n')[line - 1] ?? '该行不在当前源码范围内';
+  const automatic = $('watch-strategy').value === 'changes';
+  $('watch-line').disabled = automatic;
+  const lines = captureLines(editor.value, { strategy: $('watch-strategy').value, expression: $('watch-expression').value.trim(), line });
+  $('capture-line-preview').textContent = automatic ? lines.map(n => `L${n}: ${editor.value.split('\n')[n - 1].trim()}`).join('\n') || '未识别到可安全采集的修改行，请使用指定行。' : editor.value.split('\n')[line - 1] ?? '该行不在当前源码范围内';
 }
-function openWatch(watch) {
+function openWatch(watch, proposed) {
   stopPlayback();
   editingWatch = watch?.id;
   const selected = editor.value.slice(editor.selectionStart, editor.selectionEnd).trim();
-  const config = watch || { ...defaultWatch(), expression: /^[a-zA-Z_][\w.>\-\[\]]*$/.test(selected) ? selected : '', line: selectedLine };
+  const config = watch || proposed || { ...defaultWatch(), expression: /^[a-zA-Z_][\w.>\-\[\]]*$/.test(selected) ? selected : '', line: selectedLine, strategy: 'changes' };
   $('watch-dialog-title').textContent = watch ? '编辑观察变量' : '添加观察变量';
   $('watch-expression').value = config.expression;
   $('watch-kind').value = config.kind;
   $('watch-line').value = config.line;
+  $('watch-strategy').value = config.strategy || 'line';
   $('watch-line').max = editor.value.split('\n').length;
   $('watch-error').hidden = true;
   watchFields(config); updateCapturePreview();
@@ -213,7 +274,7 @@ function newWatchDefaults(kind) {
   return config;
 }
 function resultSpecs() {
-  if (watches.length || resultOrigin !== 'import') return watches.map(w => ({ id: w.id, name: w.expression, kind: ['adjacency', 'graph_matrix', 'forward_star'].includes(w.kind) ? 'graph' : w.kind, line: w.line }));
+  if (watches.length || resultOrigin !== 'import') return watches.map(w => ({ id: w.id, name: w.expression, kind: w.kind === 'scalar' ? 'array' : ['adjacency', 'graph_matrix', 'forward_star'].includes(w.kind) ? 'graph' : w.kind, line: w.line }));
   const result = new Map();
   for (const frame of trace?.frames ?? []) for (const s of frame.structures) if (!result.has(s.id)) result.set(s.id, { id: s.id, name: s.name, kind: s.kind });
   return [...result.values()];
@@ -228,6 +289,10 @@ function showSelection() {
   } else if (selection.type === 'edge') {
     const e = s.edges?.find(e => e.id === selection.id);
     parts.push(e ? `边 ${e.id} · ${e.source} ${s.directed ? '→' : '—'} ${e.target}${e.weight !== undefined && e.weight !== '' ? ` · 权重 ${e.weight}` : ''}` : '该边在本步不存在');
+  } else if (selection.type === 'stack-item') {
+    const item = s.items?.[selection.index];
+    parts.push(item ? `第 ${selection.index} 层${selection.index === s.items.length - 1 ? ' · 栈顶' : ''}` : '该层在本步不存在');
+    item?.forEach((cell, c) => parts.push(`${s.columns[c]} = ${cell.text}${cell.nodeId ? `（节点 ID: ${cell.nodeId}）` : ''}`));
   } else {
     const { row, col } = selection;
     parts.push(`位置 [${row}, ${col}] · 值 ${s.values?.[row]?.[col] ?? '不存在'}`);
@@ -258,9 +323,10 @@ function renderResults() {
     const card = element('article', { class: 'structure-card wide', 'data-kind': spec.kind, 'data-structure': spec.id, 'aria-label': `${spec.name} 结构视图` });
     const heading = element('div', { class: 'structure-heading' });
     const title = element('div');
-    const stats = s ? s.values ? `${s.values.length} × ${s.values[0]?.length ?? 0}` : `${s.nodes.length} 节点 / ${s.edges.length} 边` : '等待采集';
+    const stats = s ? s.kind === 'stack' ? `${s.items.length} 个元素` : s.values ? `${s.values.length} × ${s.values[0]?.length ?? 0}` : `${s.nodes.length} 节点 / ${s.edges.length} 边` : '等待采集';
     title.append(element('strong', {}, spec.name), element('small', {}, `${kinds[spec.kind]} · ${stats}`));
     const actions = element('div', { class: 'card-actions' });
+    actions.append(element('button', { class: 'collapse-card', 'aria-label': `折叠 ${spec.name} 结构卡片`, 'aria-expanded': 'true' }, '⌄'));
     const zoom = zooms.get(spec.id) ?? 1;
     for (const [text, delta, label] of [['−', -.2, '缩小'], [`${Math.round(zoom * 100)}%`, 0, '重置缩放'], ['＋', .2, '放大']]) {
       const button = element('button', { 'aria-label': `${spec.name} ${label}` }, text);
@@ -271,11 +337,13 @@ function renderResults() {
     const view = element('div', { class: 'visualization', 'data-id': spec.id, tabindex: 0, 'aria-label': `${spec.name} 数据结构` });
     const caption = element('div', { class: 'card-caption' });
     if (s) {
-      const select = item => { selection = { ...item, structureId: s.id }; showSelection(); };
-      if (s.values) renderMatrix(view, s, previous, zoom, select);
+      const select = item => { selection = { ...item, structureId: s.id }; showSelection(); revealInspector(); };
+      if (s.kind === 'stack') renderStack(view, s, previous, zoom, select);
+      else if (s.values) renderMatrix(view, s, previous, zoom, select);
       else {
         const key = JSON.stringify([s.id, s.kind]);
-        if (!layouts.has(key)) layouts.set(key, layoutStructure(s, trace.frames));
+        const topology = s.kind === 'tree' ? JSON.stringify([s.root, s.nodes.map(n => n.id), s.edges.map(e => [e.source, e.target, e.weight])]) : undefined;
+        if (!layouts.has(key) || layouts.get(key).topology !== topology) layouts.set(key, { ...layoutStructure(s, trace.frames), topology });
         renderGraph(view, s, previous, layouts.get(key), zoom, select);
       }
       if (Number.isInteger(s.capturedSeq)) {
@@ -295,6 +363,7 @@ function renderResults() {
     empty.append(copy); cards.push(empty);
   }
   $('structure-grid').replaceChildren(...cards);
+  syncWorkspaceCards();
   for (const el of $('structure-grid').querySelectorAll('.visualization')) {
     const pos = scrolls.get(el.dataset.id); if (pos) { el.scrollLeft = pos[0]; el.scrollTop = pos[1]; }
   }
@@ -304,7 +373,7 @@ function renderResults() {
 async function run() {
   if (controller) return;
   try {
-    validateExecution(executionConfig());
+    validateExecution(executionConfig(), editor.value);
     validateWatches(watches, editor.value.split('\n').length);
     if (watches.some(w => w.needsReview)) throw new Error('请先编辑并确认发生变化的采集行');
   } catch (error) { notify(error.message, true); return; }
@@ -323,7 +392,9 @@ async function run() {
     const session = await fetch('/api/session', { signal: runController.signal });
     if (!session.ok) throw new Error('无法连接本地编译服务，请通过 npm run dev 启动页面');
     const { token, capabilities } = await session.json();
+    if (payload.watches.some(watch => watch.kind === 'stack') && !capabilities?.stack) throw new Error('请重启本地服务（npm run dev），以加载栈观察支持');
     if (execution.mode === 'leetcode' && !capabilities?.leetcode) throw new Error('请重启本地服务（npm run dev），以加载新增的 LeetCode 支持');
+    if (execution.mode === 'leetcode' && !capabilities?.leetcodeAuto && (!execution.method.trim() || execution.nodes === 'auto')) throw new Error('请重启本地服务（npm run dev），以加载 LeetCode 自动识别与定义补全');
     const response = await fetch('/api/run', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Structure-Token': token },
       body: JSON.stringify(payload), signal: runController.signal,
@@ -337,14 +408,14 @@ async function run() {
       result.error || '',
     ].filter(Boolean).join('\n\n') || '程序正常结束，没有标准输出。';
     if (!response.ok) {
-      $('console-panel').open = true; $('console-badge').textContent = '失败';
+      $('console-panel').open = true; openWorkspaceDock('output'); $('console-badge').textContent = '失败';
       throw new Error(result.error || '运行失败');
     }
     trace = parseTrace(result.trace); frameIndex = 0; resultSignature = fingerprint; resultOrigin = 'run'; lastRunFailed = false;
     layouts.clear(); selection = undefined;
     $('run-status').textContent = `${trace.frames.length} 帧 · ${(result.durationMs / 1000).toFixed(1)}s · ${result.compiler}`;
     $('console-badge').textContent = '成功';
-    if (execution.mode === 'leetcode') $('console-panel').open = true;
+    if (execution.mode === 'leetcode') { $('console-panel').open = true; openWorkspaceDock('output'); }
     renderResults(); followExecution();
   } catch (error) {
     if (ticket !== runTicket) return;
@@ -356,7 +427,7 @@ async function run() {
       lastRunFailed = true;
       $('run-status').textContent = '运行失败';
       if ($('console-badge').textContent !== '失败') $('console-output').textContent = error.message;
-      $('console-badge').textContent = '失败'; $('console-panel').open = true;
+      $('console-badge').textContent = '失败'; $('console-panel').open = true; openWorkspaceDock('output');
       renderResults(); notify(error.message, true);
     }
   } finally {
@@ -394,6 +465,8 @@ for (const [value, title] of Object.entries(WATCH_TYPES)) $('watch-kind').append
 $('sample-select').addEventListener('change', event => switchSample(event.target.value));
 $('watch-kind').addEventListener('change', () => watchFields(newWatchDefaults($('watch-kind').value)));
 $('watch-line').addEventListener('input', updateCapturePreview);
+$('watch-strategy').addEventListener('change', updateCapturePreview);
+$('watch-expression').addEventListener('input', updateCapturePreview);
 $('watch-form').addEventListener('submit', event => {
   event.preventDefault();
   const config = {
@@ -401,8 +474,15 @@ $('watch-form').addEventListener('submit', event => {
     ...Object.fromEntries([...$('watch-fields').querySelectorAll('[data-field]')].map(input => [input.dataset.field, input.value.trim()])),
     id: editingWatch || `w_${crypto.randomUUID().replaceAll('-', '')}`,
     expression: $('watch-expression').value.trim(), line: Number($('watch-line').value),
+    strategy: $('watch-strategy').value,
+    color: watches.find(w => w.id === editingWatch)?.color || watches.find(w => w.expression === $('watch-expression').value.trim())?.color || WATCH_COLORS.find(color => !watches.some(w => watchColor(w, watches) === color)) || WATCH_COLORS[0],
   };
   try {
+    if (config.strategy === 'changes') {
+      const lines = captureLines(editor.value, config);
+      if (!lines.length) throw new Error('未识别到可安全采集的修改行，请指定采集行或将语句拆行并补上大括号');
+      config.line = lines[0];
+    }
     const next = editingWatch ? watches.map(w => w.id === editingWatch ? config : w) : [...watches, config];
     validateWatches(next, editor.value.split('\n').length);
     watches = next; saveDraft(); renderWatches(); renderResults(); $('watch-dialog').close();
@@ -413,6 +493,34 @@ for (const id of ['cancel-watch', 'close-watch']) $(id).addEventListener('click'
 $('guide-button').addEventListener('click', () => { stopPlayback(); $('guide').showModal(); });
 $('close-guide').addEventListener('click', () => $('guide').close());
 editor.addEventListener('input', sourceChanged);
+editor.addEventListener('scroll', syncHighlights);
+editor.addEventListener('contextmenu', event => {
+  const rect = editor.getBoundingClientRect();
+  const style = getComputedStyle(editor), canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d'); context.font = `${style.fontSize} ${style.fontFamily}`;
+  const width = context.measureText('M').width;
+  const lines = editor.value.split('\n');
+  const row = Math.floor((event.clientY - rect.top + editor.scrollTop - 14) / 22);
+  if (row < 0 || row >= lines.length) return;
+  const x = event.clientX - rect.left + editor.scrollLeft;
+  if (x < 0) return;
+  let visual = 0, offset = 0;
+  for (; offset < lines[row].length; offset++) {
+    visual += lines[row][offset] === '\t' ? width * 4 - visual % (width * 4) : context.measureText(lines[row][offset]).width;
+    if (visual > x) break;
+  }
+  const start = lines.slice(0, row).reduce((sum, text) => sum + text.length + 1, 0);
+  const name = identifierAt(editor.value, start + offset);
+  if (!name || /^(?:int|long|short|float|double|char|bool|void|auto|const|static|unsigned|signed|struct|class|public|private|protected|return|if|else|while|for|break|continue|new|delete|true|false|nullptr|using|namespace|include|std)$/.test(name)) return;
+  event.preventDefault();
+  const existing = watches.find(w => w.expression === name);
+  if (existing) { openWatch(existing); return; }
+  const declaration = codeOnly(editor.value).split('\n').find(line => !/^\s*#/.test(line) && new RegExp(`\\b${name}\\b`).test(line) && /stack|vector|array|deque|list|map|set|int|long|double|float|bool|char|Node/.test(line)) || '';
+  const kind = /\bstack\s*</.test(declaration) ? 'stack' : /vector\s*<\s*vector|\[.*\]\s*\[/.test(declaration) ? 'matrix'
+    : /vector|array|deque|\[[^\]]*\]/.test(declaration) ? 'array'
+    : /TreeNode/.test(declaration) ? 'tree' : /ListNode/.test(declaration) ? 'list' : 'scalar';
+  openWatch(undefined, { ...newWatchDefaults(kind), expression: name, line: row + 1, strategy: 'changes' });
+});
 editor.addEventListener('click', updateCursor);
 editor.addEventListener('keyup', updateCursor);
 editor.addEventListener('scroll', () => { $('line-gutter').scrollTop = editor.scrollTop; });
@@ -473,4 +581,6 @@ try {
     drafts = stored.drafts; activeSample = stored.activeSample;
   }
 } catch { /* A fresh workspace is always usable without local storage. */ }
+initWorkspace();
 switchSample(activeSample, true);
+document.addEventListener('themechange', renderWatches);

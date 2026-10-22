@@ -141,6 +141,30 @@ public:
 };
 `;
 
+const leetcodeStack = `class Solution {
+public:
+    vector<int> inorderTraversal(TreeNode* root) {
+        vector<int> ans;
+        stack<pair<bool, TreeNode*>> stack;
+        stack.push({false, root});
+        while (!stack.empty()) {
+            auto [visited, node] = stack.top();
+            stack.pop();
+            if (node) {
+                if (visited) {
+                    ans.push_back(node->val);
+                } else {
+                    stack.push({false, node->right});
+                    stack.push({true, node});
+                    stack.push({false, node->left});
+                }
+            } // 本轮操作完成
+        }
+        return ans;
+    }
+};
+`;
+
 export const EDITOR_SAMPLES = [
   { id: 'bfs', title: '图 · BFS', source: bfs, stdin: '', watches: [
     watch(bfs, 'adj', 'adjacency', 'cout << "处理节点', { count: 'n', active: 'u' }),
@@ -159,13 +183,20 @@ export const EDITOR_SAMPLES = [
     watch(list, 'curr', 'list', 'curr = next;'),
   ] },
   { id: 'leetcode-array', title: 'LeetCode · 一维数组动态和', source: leetcodeArray, stdin: '',
-    execution: { mode: 'leetcode', method: 'runningSum', arguments: '[[1,2,3,4]]', nodes: 'none' },
+    execution: { mode: 'leetcode', method: '', arguments: '[[1,2,3,4]]', nodes: 'auto' },
     watches: [watch(leetcodeArray, 'nums', 'array', 'nums[i] +=', { count: 'nums.size()', active: 'i' })] },
   { id: 'leetcode-list', title: 'LeetCode · 反转链表', source: leetcodeList, stdin: '',
-    execution: { mode: 'leetcode', method: 'reverseList', arguments: '[[10,20,30,40,50]]', nodes: 'list' },
+    execution: { mode: 'leetcode', method: '', arguments: '[[10,20,30,40,50]]', nodes: 'auto' },
     watches: [
       watch(leetcodeList, 'prev', 'list', 'head = next;', { valueField: 'val' }),
       watch(leetcodeList, 'head', 'list', 'head = next;', { valueField: 'val' }),
+    ] },
+  { id: 'leetcode-stack', title: 'LeetCode · 栈与二叉树遍历', source: leetcodeStack, stdin: '',
+    execution: { mode: 'leetcode', method: '', arguments: '[[1,null,2,3]]', nodes: 'auto' },
+    watches: [
+      watch(leetcodeStack, 'root', 'tree', '本轮操作完成', { valueField: 'val' }),
+      watch(leetcodeStack, 'stack', 'stack', '本轮操作完成'),
+      watch(leetcodeStack, 'ans', 'array', '本轮操作完成'),
     ] },
   { id: 'custom', title: '自定义代码', source: custom, stdin: '', watches: [] },
 ];
@@ -178,6 +209,7 @@ export function rebaseWatches(watches, before, after) {
   while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
   while (suffix < oldLines.length - prefix && suffix < newLines.length - prefix && oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]) suffix++;
   return watches.map(w => {
+    if (w.strategy === 'changes') return { ...w, line: Math.max(1, Math.min(w.line, newLines.length)), needsReview: false };
     if (w.line <= prefix) return w;
     if (w.line > oldLines.length - suffix) return { ...w, line: w.line + newLines.length - oldLines.length };
     return { ...w, line: Math.max(1, Math.min(w.line, newLines.length)), needsReview: true };

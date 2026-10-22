@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { runCode } from '../scripts/runner.mjs';
 import { defaultWatch } from '../src/watch-config.js';
 import { parseTrace } from '../src/trace.js';
+import { readFile } from 'node:fs/promises';
 
 const entry = (method, args, nodes = 'none') => ({ mode: 'leetcode', method, arguments: JSON.stringify(args), nodes });
 const watch = (source, expression, kind, marker, options = {}) => ({
@@ -123,4 +124,58 @@ public:
 };`;
   await assert.rejects(run(source, entry('solve', []), [watch(source, 'data', 'array', 'vector<int>', { count: '1' })]),
     error => error.phase === 'compile' && /main.cpp.*4/.test(error.diagnostics));
+});
+
+test('automatic method and ListNode completion work with LeetCode comment templates and a private helper', async () => {
+  const source = `/** Definition for singly-linked list.
+ * struct ListNode { int val; ListNode* next; };
+ */
+class Solution {
+    void increment(ListNode* head) { if (head) ++head->val; }
+public:
+    ListNode* update(ListNode* head) {
+        increment(head);
+        return head;
+    }
+};`;
+  const result = await run(source, { mode: 'leetcode', arguments: '[[1,2,3]]' }, [
+    watch(source, 'head', 'list', '        increment(head);', { valueField: 'val' }),
+  ]);
+  assert.match(result.stdout, /返回值: \[2,2,3\]/);
+  assert.equal(result.parsed.frames[0].source.line, 8);
+});
+
+test('auto mode completes only the missing node and preserves user node definitions', async () => {
+  const source = `struct ListNode {
+    int val; ListNode* next;
+    ListNode(int x) : val(x), next(nullptr) {}
+};
+class Solution {
+public:
+    TreeNode* solve(ListNode* head, TreeNode* root) {
+        root->val += head->val;
+        return root;
+    }
+};`;
+  const result = await run(source, { mode: 'leetcode', arguments: '[[3],[1,null,2]]' }, [
+    watch(source, 'root', 'tree', 'root->val +=', { valueField: 'val' }),
+  ]);
+  assert.match(result.stdout, /返回值: \[4,null,2\]/);
+  assert.equal(result.parsed.frames[0].structures[0].nodes.length, 2);
+});
+
+test('reported inorder snippet compiles with automatic ans length; invalid n identifies the watch field', async () => {
+  const source = await readFile(new URL('./fixtures/leetcode-inorder.cpp', import.meta.url), 'utf8');
+  const execution = { mode: 'leetcode', arguments: '[[1,null,2,3]]' };
+  const ans = watch(source, 'ans', 'array', 'ans.push_back');
+  await assert.rejects(run(source, execution, [{ ...ans, count: 'n' }]), error => {
+    assert.equal(error.phase, 'compile');
+    assert.match(error.message, /观察配置编译失败.*观察“ans”.*元素数量.*n 在采集位置未声明/s);
+    return true;
+  });
+  const result = await run(source, execution, [ans, watch(source, 'root', 'tree', 'ans.push_back', { valueField: 'val' })]);
+  assert.match(result.stdout, /返回值: \[1,3,2\]/);
+  assert.equal(result.parsed.frames.length, 3);
+  assert.deepEqual(result.parsed.frames.at(-1).structures.find(s => s.id === 'ans').values, [['1', '3', '2']]);
+  assert.equal(result.parsed.frames.at(-1).structures.find(s => s.id === 'root').nodes.length, 3);
 });

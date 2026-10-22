@@ -5,6 +5,7 @@
 #include <limits>
 #include <iostream>
 #include <type_traits>
+#include <stack>
 
 namespace structure_lab_editor {
 // Each capture reads values immediately in their original scope. Never retain pointers/lambdas.
@@ -22,6 +23,54 @@ template<class C> void range(const C& c, int first, int count) {
 }
 template<class T> std::string pointer_id(T* p) {
     return viz::str(reinterpret_cast<std::uintptr_t>(p));
+}
+
+struct StackCell {
+    std::string text, node_id;
+    bool pointer = false;
+    std::string json() const {
+        return "{\"text\":" + viz::quote(text) + (pointer ? ",\"nodeId\":" + (node_id.empty() ? "null" : viz::quote(node_id)) : "") + "}";
+    }
+};
+class StackBuilder {
+public:
+    bool paired = false;
+    // Store bottom first so push/pop do not renumber the surviving entries.
+    std::vector<std::vector<StackCell>> items;
+    std::string json(const std::string& id, const std::string& name, const std::string& kind) const {
+        std::vector<std::string> rows;
+        for (const auto& item : items) {
+            std::vector<std::string> cells;
+            for (const auto& cell : item) cells.push_back(cell.json());
+            rows.push_back("[" + viz::join(cells) + "]");
+        }
+        return "{\"id\":" + viz::quote(id) + ",\"name\":" + viz::quote(name) + ",\"kind\":" + viz::quote(kind)
+            + ",\"columns\":" + (paired ? "[\"first\",\"second\"]" : "[\"value\"]") + ",\"items\":[" + viz::join(rows) + "]}";
+    }
+};
+template<class T> struct is_pair : std::false_type {};
+template<class A, class B> struct is_pair<std::pair<A, B>> : std::true_type {};
+template<class T, class Value> StackCell stack_cell(const T& item, Value value) {
+    if constexpr (std::is_pointer_v<T>) {
+        return item ? StackCell{viz::str(value(item)), pointer_id(item), true} : StackCell{"nullptr", "", true};
+    } else if constexpr (std::is_same_v<T, bool>) {
+        return {item ? "true" : "false", "", false};
+    } else {
+        return {viz::str(item), "", false};
+    }
+}
+template<class T, class Container, class Value>
+void stack(StackBuilder& builder, const std::stack<T, Container>& source, Value value) {
+    if (source.size() > 1000) throw std::length_error("Stack exceeds 1000 elements");
+    auto copy = source;
+    builder.paired = is_pair<T>::value;
+    while (!copy.empty()) {
+        const T& item = copy.top();
+        if constexpr (is_pair<T>::value) builder.items.push_back({stack_cell(item.first, value), stack_cell(item.second, value)});
+        else builder.items.push_back({stack_cell(item, value)});
+        copy.pop();
+    }
+    std::reverse(builder.items.begin(), builder.items.end());
 }
 
 class Session {
