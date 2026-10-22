@@ -12,6 +12,8 @@
   --done-fill:#234237; --done-stroke:#6ca58c; --done-text:#b7e1cc;
   --active-fill:#a8df83; --active-stroke:#c9edb2; --active-text:#20321b;
   --edge:#7c91aa; --changed:#a9c293; --shadow:#0005;
+  --syntax-keyword:#c8a6ed; --syntax-type:#82cfc5; --syntax-function:#e8ce95;
+  --syntax-string:#badb9a; --syntax-number:#e9af8b; --syntax-comment:#8295a9; --syntax-directive:#8dbce9;
 }
 :root[data-theme=light] {
   color-scheme:light;
@@ -26,6 +28,8 @@
   --done-fill:#e8f4ee; --done-stroke:#76a88f; --done-text:#32664d;
   --active-fill:#d0e9bd; --active-stroke:#76a554; --active-text:#244716;
   --edge:#8194aa; --changed:#6e8f55; --shadow:#2b43651c;
+  --syntax-keyword:#8051a4; --syntax-type:#16766e; --syntax-function:#8a611c;
+  --syntax-string:#537b2b; --syntax-number:#ab542c; --syntax-comment:#687b8e; --syntax-directive:#2e6fa6;
 }
 .theme-toggle svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
 .theme-toggle .moon-icon { display:none; }
@@ -41,6 +45,13 @@
 select,input,.execution-toolbar select,#stdin,#leetcode-arguments { background:var(--field); border-color:var(--line); color:var(--text); }
 textarea::placeholder,input::placeholder { color:var(--faint); opacity:1; }
 .source-highlights { color:var(--code); }
+.cpp-keyword { color:var(--syntax-keyword); }
+.cpp-type { color:var(--syntax-type); }
+.cpp-function { color:var(--syntax-function); }
+.cpp-string { color:var(--syntax-string); }
+.cpp-number,.cpp-constant { color:var(--syntax-number); }
+.cpp-comment { color:var(--syntax-comment); }
+.cpp-preprocessor { color:var(--syntax-directive); }
 #source-editor { color:transparent; caret-color:var(--green); }
 #source-editor::selection { background:#739acb55; color:transparent; }
 .gutter-line { color:var(--faint); }

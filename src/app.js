@@ -6,6 +6,7 @@ import { normalizeExecution, validateExecution } from './execution-config.js';
 import { analyzeLeetCode, nodeDefinitionsFor } from './leetcode-analysis.js';
 import { captureLines, identifierAt, codeOnly, watchColor, WATCH_COLORS } from './watch-strategy.js';
 import { initWorkspace, openWorkspaceDock, syncWorkspaceCards, revealInspector } from './workspace.js';
+import { tokenizeCpp } from './cpp-highlight.js';
 
 const $ = id => document.getElementById(id);
 const lightWatchColors = ['#46751b', '#0872a1', '#a65113', '#7952ba', '#b83b72', '#087c69', '#886300', '#4b60b8', '#9a42a8', '#367b3d', '#b34236', '#087780'];
@@ -21,23 +22,29 @@ function syncHighlights() {
   highlights.scrollLeft = editor.scrollLeft;
 }
 function renderHighlights() {
-  const code = codeOnly(editor.value).split('\n'), fragment = document.createDocumentFragment();
+  const fragment = document.createDocumentFragment();
+  const lines = [[]];
+  for (const token of tokenizeCpp(editor.value)) {
+    token.text.split('\n').forEach((text, index) => {
+      if (index) lines.push([]);
+      if (text) lines.at(-1).push({ text, kind:token.kind });
+    });
+  }
   const locations = watches.map(watch => ({ watch, lines: captureLines(editor.value, watch) }));
-  editor.value.split('\n').forEach((text, index) => {
+  lines.forEach((tokens, index) => {
     const row = element('span', { class: 'source-highlight-line' });
     const colors = locations.filter(item => item.lines.includes(index + 1)).map(item => uiWatchColor(item.watch, watches));
     if (colors.length) row.style.background = `linear-gradient(90deg, ${colors.flatMap((color, i) => [`${color}16 ${i / colors.length * 100}%`, `${color}16 ${(i + 1) / colors.length * 100}%`]).join(', ')})`;
-    let offset = 0;
-    for (const match of code[index].matchAll(/\b[a-zA-Z_]\w*\b/g)) {
-      const watch = watches.find(w => w.expression === match[0]);
-      if (!watch) continue;
-      row.append(document.createTextNode(text.slice(offset, match.index)));
-      const mark = element('span', {}, match[0]);
-      mark.style.color = uiWatchColor(watch, watches);
-      mark.style.background = `${uiWatchColor(watch, watches)}18`;
-      row.append(mark); offset = match.index + match[0].length;
+    for (const token of tokens) {
+      const mark = element('span', token.kind ? { class:`cpp-${token.kind}` } : {}, token.text);
+      const watch = ['identifier','type','function'].includes(token.kind) && watches.find(w => w.expression === token.text);
+      if (watch) {
+        mark.style.color = uiWatchColor(watch, watches);
+        mark.style.background = `${uiWatchColor(watch, watches)}18`;
+      }
+      row.append(mark);
     }
-    row.append(document.createTextNode(text.slice(offset) || (text ? '' : ' ')));
+    if (!tokens.length) row.append(document.createTextNode(' '));
     fragment.append(row);
   });
   highlights.replaceChildren(fragment); syncHighlights();
